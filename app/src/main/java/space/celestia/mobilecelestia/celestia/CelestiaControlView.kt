@@ -41,7 +41,6 @@ class CelestiaControlView(context: Context, private val items: List<CelestiaCont
         val density = resources.displayMetrics.density
 
         for (item in items) {
-
             val button = StandardImageButton(context)
             button.setColorFilter(ContextCompat.getColor(context, R.color.colorSecondaryLabel))
 
@@ -51,6 +50,7 @@ class CelestiaControlView(context: Context, private val items: List<CelestiaCont
                 is CelestiaTapButton -> {
                     button.setImageResource(item.image)
                     button.setOnClickListener { listener?.didTapAction(item.action) }
+                    button.contentDescription = item.action.toString()
                 }
                 is CelestiaPressButton -> {
                     button.setImageResource(item.image)

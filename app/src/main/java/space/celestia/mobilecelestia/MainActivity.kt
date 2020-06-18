@@ -532,9 +532,11 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
         }
     }
 
-    override fun onNewIntent(intent: Intent?) {
+    override public fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        handleIntent(intent)
+        runOnUiThread {
+            handleIntent(intent)
+        }
     }
 
     private fun handleIntent(intent: Intent?) {
