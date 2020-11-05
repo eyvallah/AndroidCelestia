@@ -16,15 +16,11 @@ import android.animation.ObjectAnimator
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
-import android.opengl.GLSurfaceView
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.util.Size
-import android.view.DisplayCutout
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
+import android.view.*
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.annotation.RequiresApi
@@ -37,15 +33,14 @@ import space.celestia.mobilecelestia.MainActivity
 import space.celestia.mobilecelestia.R
 import space.celestia.mobilecelestia.browser.createAllBrowserItems
 import space.celestia.mobilecelestia.core.CelestiaAppCore
+import space.celestia.mobilecelestia.core.CelestiaRenderer
 import space.celestia.mobilecelestia.utils.AppStatusReporter
 import space.celestia.mobilecelestia.utils.CelestiaString
 import space.celestia.mobilecelestia.utils.FontHelper
 import java.util.*
 import java.util.concurrent.TimeUnit
-import javax.microedition.khronos.egl.EGLConfig
-import javax.microedition.khronos.opengles.GL10
 
-class CelestiaFragment: Fragment(), GLSurfaceView.Renderer, CelestiaControlView.Listener {
+class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.Listener {
     private var activity: Activity? = null
 
     // MARK: GL View
@@ -64,6 +59,7 @@ class CelestiaFragment: Fragment(), GLSurfaceView.Renderer, CelestiaControlView.
     private var enableFullResolution = false
     private var languageOverride: String? = null
     private val core by lazy { CelestiaAppCore.shared() }
+    private val renderer by lazy { CelestiaRenderer.shared() }
 
     private val scaleFactor: Float
         get() = if (enableFullResolution) 1.0f else (1.0f / resources.displayMetrics.density)
@@ -94,6 +90,11 @@ class CelestiaFragment: Fragment(), GLSurfaceView.Renderer, CelestiaControlView.
             enableMultisample = it.getBoolean(ARG_MULTI_SAMPLE)
             enableFullResolution = it.getBoolean(ARG_FULL_RESOLUTION)
             languageOverride = it.getString(ARG_LANG_OVERRIDE)
+        }
+
+        core.setRenderer(renderer)
+        renderer.setEngineStartedListener {
+            this.load()
         }
     }
 
@@ -144,13 +145,13 @@ class CelestiaFragment: Fragment(), GLSurfaceView.Renderer, CelestiaControlView.
     override fun onPause() {
         super.onPause()
 
-        glView?.onPause()
+        renderer.pause()
     }
 
     override fun onResume() {
         super.onResume()
 
-        glView?.onResume()
+        renderer.resume()
     }
 
     override fun onAttach(context: Context) {
@@ -194,20 +195,19 @@ class CelestiaFragment: Fragment(), GLSurfaceView.Renderer, CelestiaControlView.
 
     private fun setupGLView() {
         val activity = this.activity ?: return
+        val container = glViewContainer ?: return
+        val view = CelestiaView(activity, scaleFactor)
 
-        glView = CelestiaView(activity, scaleFactor)
-        viewInteraction = CelestiaInteraction(activity)
-        viewInteraction?.scaleFactor = scaleFactor
-        viewInteraction?.density = resources.displayMetrics.density
-        glView?.isFocusable = true
-        glView?.let {
-            glViewContainer?.addView(it, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-            it.preserveEGLContextOnPause = true
-            it.setEGLContextClientVersion(2)
-            glView?.setEGLConfigChooser(CelestiaEGLChooser(enableMultisample))
-            it.setRenderer(this)
-            it.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
-        }
+        val interaction = CelestiaInteraction(activity)
+        glView = view
+        viewInteraction = interaction
+
+        interaction.scaleFactor = scaleFactor
+        interaction.density = resources.displayMetrics.density
+        view.isFocusable = true
+        renderer.start(activity, enableMultisample)
+        container.addView(view, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        view.holder?.addCallback(this)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -283,8 +283,11 @@ class CelestiaFragment: Fragment(), GLSurfaceView.Renderer, CelestiaControlView.
         }
     }
 
-    // Render
-    override fun onSurfaceCreated(p0: GL10?, p1: EGLConfig?) {
+    override fun surfaceCreated(holder: SurfaceHolder?) {
+        renderer.setSurface(holder?.surface)
+    }
+
+    private fun load() {
         val data = pathToLoad
         val cfg = cfgToLoad
         val addon = addonToLoad
@@ -300,19 +303,14 @@ class CelestiaFragment: Fragment(), GLSurfaceView.Renderer, CelestiaControlView.
         loadCelestia(data, cfg, addon)
     }
 
-    override fun onSurfaceChanged(p0: GL10?, p1: Int, p2: Int) {
-        if (!loadSuccess) { return }
-
-        glViewSize = Size(p1, p2)
-        Log.d(TAG, "Resize to $p1 x $p2")
-        core.resize(p1, p2)
+    override fun surfaceChanged(holder: SurfaceHolder?, format: Int, width: Int, height: Int) {
+        glViewSize = Size(width, height)
+        Log.d(TAG, "Resize to $width x $height")
+        renderer.setSurfaceSize(width, height)
     }
 
-    override fun onDrawFrame(p0: GL10?) {
-        if (!loadSuccess) { return }
-
-        core.draw()
-        core.tick()
+    override fun surfaceDestroyed(holder: SurfaceHolder?) {
+        renderer.setSurface(null)
     }
 
     // Actions

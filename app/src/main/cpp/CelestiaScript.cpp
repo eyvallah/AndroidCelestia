@@ -24,9 +24,7 @@ Java_space_celestia_mobilecelestia_core_CelestiaScript_c_1getScriptsInDirectory(
 
     jobject arrayObj = env->NewObject(alClz, aliMethodID, (int)results->size());
 
-    for (int i = 0; i < results->size(); i++) {
-        auto result = (*results)[i];
-
+    for (const auto& result : *results) {
         jobject jscript = env->NewObject(cscriptClz, cscriptiMethodID,
                                          env->NewStringUTF(result.filename.c_str()),
                                          env->NewStringUTF(result.title.c_str())

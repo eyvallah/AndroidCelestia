@@ -155,6 +155,10 @@ public class CelestiaAppCore {
     }
     public static void chdir(String path) { c_chdir(path);}
 
+    public void setRenderer(CelestiaRenderer renderer) {
+        renderer.setCorePointer(pointer);
+    }
+
     // Locale
     public static void setLocaleDirectoryPath(@NonNull String localeDirectoryPath, @NonNull String locale) { c_setLocaleDirectoryPath(localeDirectoryPath, locale); }
     public static @NonNull String getLocalizedString(@NonNull String string) { return getLocalizedString(string, "celestia_ui"); }
