@@ -1,17 +1,8 @@
-# For more information about using CMake with Android Studio, read the
-# documentation: https://d.android.com/studio/projects/add-native-code.html
-
-# Sets the minimum version of CMake required to build the native library.
-
 cmake_minimum_required(VERSION 3.4.1)
 
 add_subdirectory( crash )
 add_subdirectory( fonthelper )
 
-# Creates and names a library, sets it as either STATIC
-# or SHARED, and provides the relative paths to its source code.
-# You can define multiple libraries, and CMake builds them for you.
-# Gradle automatically packages shared libraries with your APK.
 set(CELESTIA_DIR ${CMAKE_SOURCE_DIR}/../../../../../Celestia)
 set(CELESTIA_SRC_DIR "${CELESTIA_DIR}/src")
 set(CELESTIA_SOURCES
@@ -419,6 +410,9 @@ list(APPEND CELESTIA_SOURCES
 set(THIRD_PARTY_DIR "${CMAKE_SOURCE_DIR}/libs")
 set(THIRD_PARTY_LIB_DIR "${THIRD_PARTY_DIR}/libs")
 set(THIRD_PARTY_INCLUDE_DIR "${THIRD_PARTY_DIR}/include")
+set(GAME_SDK_DIR "${CMAKE_SOURCE_DIR}/gamesdk")
+set(GAME_SDK_INCLUDE_DIR "${GAME_SDK_DIR}/include")
+set(GAME_SDK_LIB_DIR "${GAME_SDK_DIR}/libs")
 
 set(CMAKE_CXX_STANDARD 11)
 
@@ -440,6 +434,7 @@ include_directories(
         ${THIRD_PARTY_INCLUDE_DIR}/libepoxy
         ${THIRD_PARTY_INCLUDE_DIR}/json
         ${THIRD_PARTY_INCLUDE_DIR}/freetype/freetype2
+        ${GAME_SDK_INCLUDE_DIR}
 )
 
 add_library(cspice STATIC IMPORTED)
@@ -472,37 +467,20 @@ set_target_properties(jpeg PROPERTIES IMPORTED_LOCATION ${THIRD_PARTY_LIB_DIR}/$
 add_library(freetype STATIC IMPORTED)
 set_target_properties(freetype PROPERTIES IMPORTED_LOCATION ${THIRD_PARTY_LIB_DIR}/${CMAKE_ANDROID_ARCH_ABI}/libfreetype.a)
 
-add_library( # Sets the name of the library.
+add_library(gamesdk STATIC IMPORTED)
+set_target_properties(gamesdk PROPERTIES IMPORTED_LOCATION ${GAME_SDK_LIB_DIR}/${CMAKE_ANDROID_ARCH_ABI}/libgamesdk.a)
+
+add_library(
         celestia
-
-        # Sets the library as a shared library.
         SHARED
-
-        # Provides a relative path to your source file(s).
         ${CELESTIA_SOURCES} )
 
-# Searches for a specified prebuilt library and stores the path as a
-# variable. Because CMake includes system libraries in the search path by
-# default, you only need to specify the name of the public NDK library
-# you want to add. CMake verifies that the library exists before
-# completing its build.
-
-find_library( # Sets the name of the path variable.
+find_library(
         log-lib
-
-        # Specifies the name of the NDK library that
-        # you want CMake to locate.
         log )
 
-# Specifies libraries CMake should link to your target library. You
-# can link multiple libraries, such as libraries you define in this
-# build script, prebuilt third-party libraries, or system libraries.
-
-target_link_libraries( # Specifies the target library.
+target_link_libraries(
         celestia
-
-        # Links the target library to the log library
-        # included in the NDK.
         z
         fmt
         libepoxy
@@ -516,4 +494,5 @@ target_link_libraries( # Specifies the target library.
         cspice
         EGL
         android
+        gamesdk
         ${log-lib} )

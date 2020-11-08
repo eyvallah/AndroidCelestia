@@ -281,10 +281,19 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
                 view?.rootWindowInsets?.displayCutout?.let { applyCutout(it) }
             }
         }
+
+        celestiaLoaded = true
     }
 
     override fun surfaceCreated(holder: SurfaceHolder?) {
         renderer.setSurface(holder?.surface)
+    }
+
+    override fun onDestroy() {
+        if (celestiaLoaded)
+            renderer.stop()
+
+        super.onDestroy()
     }
 
     private fun load() {
@@ -443,6 +452,8 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
         private const val ARG_LANG_OVERRIDE = "lang"
 
         private const val TAG = "CelestiaFragment"
+
+        var celestiaLoaded = false
 
         fun newInstance(data: String, cfg: String, addon: String?, enableMultisample: Boolean, enableFullResolution: Boolean, languageOverride: String?) =
             CelestiaFragment().apply {
