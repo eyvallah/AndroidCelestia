@@ -285,8 +285,8 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
         celestiaLoaded = true
     }
 
-    override fun surfaceCreated(holder: SurfaceHolder?) {
-        renderer.setSurface(holder?.surface)
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        renderer.setSurface(holder.surface)
     }
 
     override fun onDestroy() {
@@ -312,13 +312,13 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
         loadCelestia(data, cfg, addon)
     }
 
-    override fun surfaceChanged(holder: SurfaceHolder?, format: Int, width: Int, height: Int) {
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         glViewSize = Size(width, height)
         Log.d(TAG, "Resize to $width x $height")
         renderer.setSurfaceSize(width, height)
     }
 
-    override fun surfaceDestroyed(holder: SurfaceHolder?) {
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
         renderer.setSurface(null)
     }
 
