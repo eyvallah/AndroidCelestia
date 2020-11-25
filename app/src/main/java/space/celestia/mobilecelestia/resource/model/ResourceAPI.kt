@@ -12,9 +12,7 @@
 package space.celestia.mobilecelestia.resource.model
 
 import com.google.gson.*
-import io.reactivex.rxjava3.core.Observable
 import retrofit2.Retrofit
-import retrofit2.adapter.rxjava3.RxJava3CallAdapterFactory
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Query
@@ -40,7 +38,6 @@ object ResourceAPI {
 
     val shared: Retrofit = Retrofit.Builder()
         .baseUrl("https://celestia.mobi/api/resource/")
-        .addCallAdapterFactory(RxJava3CallAdapterFactory.create())
         .addConverterFactory(GsonConverterFactory.create())
         .build()
 
@@ -49,19 +46,19 @@ object ResourceAPI {
 
 interface ResourceAPIService {
     @GET("categories")
-    fun categories(
+    suspend fun categories(
         @Query("lang") lang: String
-    ): Observable<BaseResult>
+    ): BaseResult
 
     @GET("items")
-    fun items(
+    suspend fun items(
         @Query("lang") lang: String,
         @Query("category") category: String
-    ): Observable<BaseResult>
+    ): BaseResult
 
     @GET("item")
-    fun item(
+    suspend fun item(
         @Query("lang") lang: String,
         @Query("item") item: String
-    ): Observable<BaseResult>
+    ): BaseResult
 }

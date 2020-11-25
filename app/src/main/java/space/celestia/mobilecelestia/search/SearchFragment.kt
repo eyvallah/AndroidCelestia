@@ -20,28 +20,46 @@ import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.SearchView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
-import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.schedulers.Schedulers
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.withContext
 import space.celestia.mobilecelestia.R
 import space.celestia.mobilecelestia.core.CelestiaAppCore
-import space.celestia.mobilecelestia.search.model.RxSearchObservable
-import java.util.concurrent.TimeUnit
+
+@ExperimentalCoroutinesApi
+fun SearchView.textChanges(): Flow<Pair<String, Boolean>> {
+    return callbackFlow<Pair<String, Boolean>> {
+        val listener = object : SearchView.OnQueryTextListener {
+            override fun onQueryTextChange(newText: String?): Boolean {
+                offer(Pair(newText ?: "", false))
+                return true
+            }
+
+            override fun onQueryTextSubmit(query: String?): Boolean {
+                offer(Pair(query ?: "", true))
+                return true
+            }
+        }
+        setOnQueryTextListener(listener)
+        awaitClose { setOnQueryTextListener(null) }
+    }
+}
 
 class SearchFragment : Fragment() {
 
     private var listener: Listener? = null
     private val listAdapter by lazy { SearchRecyclerViewAdapter(listener) }
 
-    private val compositeDisposable = CompositeDisposable()
-
     private var searchView: SearchView? = null
 
-    private var lastSearchText: String = ""
-    private var lastSearchResultCount: Int = 0
-
+    @FlowPreview
+    @ExperimentalCoroutinesApi
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -63,37 +81,40 @@ class SearchFragment : Fragment() {
         return view
     }
 
+    @FlowPreview
+    @ExperimentalCoroutinesApi
     private fun setupSearchSearchView() {
         val searchView = this.searchView ?: return
-        val disposable = RxSearchObservable.fromView(searchView)
-            .debounce(300, TimeUnit.MILLISECONDS)
+        searchView.textChanges()
             .distinctUntilChanged()
-            .map {
-                if (it.isEmpty()) { return@map Pair("", listOf<String>()) }
+            .debounce(300)
+            .mapLatest {
+                val key = it.first
                 val core = CelestiaAppCore.shared()
-                return@map Pair(it, core.simulation.completionForText(it, SEARCH_RESULT_LIMIT))
+                val result = if (key.isEmpty()) listOf<String>() else core.simulation.completionForText(key, SEARCH_RESULT_LIMIT)
+                Triple(key, result, it.second)
             }
-            .subscribeOn(Schedulers.io())
-            .observeOn(AndroidSchedulers.mainThread())
-            .subscribe({
-                lastSearchText = it.first
-                lastSearchResultCount = it.second.size
-                listAdapter.updateSearchResults(it.second)
-                listAdapter.notifyDataSetChanged()
-            }, {}, {
-                // Submit, clear focus
-                searchView.clearFocus()
-                (activity?.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)?.hideSoftInputFromWindow(searchView.windowToken, 0)
-                setupSearchSearchView()
+            .onEach {
+                withContext(Dispatchers.Main) {
+                    val lastSearchText = it.first
+                    val lastSearchResultCount = it.second.size
+                    listAdapter.updateSearchResults(it.second)
+                    listAdapter.notifyDataSetChanged()
 
-                if (lastSearchText.isNotEmpty() && lastSearchResultCount == 0) {
-                    listener?.onSearchItemSubmit(lastSearchText)
+                    if (!it.third) return@withContext
+
+                    // Submit, clear focus
+                    searchView.clearFocus()
+                    (activity?.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)?.hideSoftInputFromWindow(searchView.windowToken, 0)
+                    setupSearchSearchView()
+
+                    if (lastSearchText.isNotEmpty() && lastSearchResultCount == 0) {
+                        listener?.onSearchItemSubmit(lastSearchText)
+                    }
                 }
-
-                lastSearchText = ""
-                lastSearchResultCount = 0
-            })
-        compositeDisposable.add(disposable)
+            }
+            .flowOn(Dispatchers.IO)
+            .launchIn(lifecycleScope)
     }
 
     override fun onAttach(context: Context) {
@@ -108,12 +129,6 @@ class SearchFragment : Fragment() {
     override fun onDetach() {
         super.onDetach()
         listener = null
-    }
-
-    override fun onDestroy() {
-        compositeDisposable.clear()
-
-        super.onDestroy()
     }
 
     interface Listener {

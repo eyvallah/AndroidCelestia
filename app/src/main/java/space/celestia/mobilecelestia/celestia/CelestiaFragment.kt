@@ -27,8 +27,6 @@ import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.animation.addListener
 import androidx.core.view.MenuCompat
 import androidx.fragment.app.Fragment
-import io.reactivex.rxjava3.core.Observable
-import io.reactivex.rxjava3.disposables.Disposable
 import space.celestia.mobilecelestia.MainActivity
 import space.celestia.mobilecelestia.R
 import space.celestia.mobilecelestia.browser.createAllBrowserItems
@@ -37,7 +35,7 @@ import space.celestia.mobilecelestia.info.model.CelestiaAction
 import space.celestia.mobilecelestia.utils.AppStatusReporter
 import space.celestia.mobilecelestia.utils.CelestiaString
 import java.util.*
-import java.util.concurrent.TimeUnit
+import kotlin.concurrent.fixedRateTimer
 
 class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.Listener, AppStatusReporter.Listener, CelestiaAppCore.ContextMenuHandler {
     private var activity: Activity? = null
@@ -62,16 +60,17 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
     private val renderer by lazy { CelestiaRenderer.shared() }
     private var pendingTarget: CelestiaSelection? = null
     private var browserItems: ArrayList<CelestiaBrowserItem> = arrayListOf()
+    private var density: Float = 1f
 
     private val scaleFactor: Float
-        get() = if (enableFullResolution) 1.0f else (1.0f / resources.displayMetrics.density)
+        get() = if (enableFullResolution) 1.0f else (1.0f / density)
 
     private val controlMargin
-        get() = (4 * resources.displayMetrics.density).toInt()
+        get() = (4 * density).toInt()
     private val controlContainerTrailingMargin
-        get() = (8 * resources.displayMetrics.density).toInt()
+        get() = (8 * density).toInt()
 
-    private var zoomTimer: Disposable? = null
+    private var zoomTimer: Timer? = null
 
     private var loadSuccess = false
 
@@ -85,6 +84,7 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        density = resources.displayMetrics.density
         arguments?.let {
             pathToLoad = it.getString(ARG_DATA_DIR)
             cfgToLoad = it.getString(ARG_CFG_FILE)
@@ -188,7 +188,7 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
 
         listener = null
         activity = null
-        zoomTimer?.dispose()
+        zoomTimer?.cancel()
         zoomTimer = null
     }
 
@@ -231,7 +231,7 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
         viewInteraction = interaction
 
         interaction.scaleFactor = scaleFactor
-        interaction.density = resources.displayMetrics.density
+        interaction.density = density
         view.isFocusable = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             view.defaultFocusHighlightEnabled = false
@@ -268,7 +268,6 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
         // Prepare for browser items
         core.simulation.createAllBrowserItems()
 
-        val density = resources.displayMetrics.density
         core.setDPI((96 * density * scaleFactor).toInt())
         core.setPickTolerance(10f * density * scaleFactor)
 
@@ -479,8 +478,6 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
 
         val ltr = resources.configuration.layoutDirection != View.LAYOUT_DIRECTION_RTL
 
-        val density = resources.displayMetrics.density
-
         if (current == new) { return }
 
         var maxValue = current.width + controlContainerTrailingMargin
@@ -563,14 +560,16 @@ class CelestiaFragment: Fragment(), SurfaceHolder.Callback, CelestiaControlView.
             else -> {}
         }
 
-        zoomTimer?.dispose()
-        zoomTimer = Observable.interval(100, TimeUnit.MILLISECONDS).subscribe {
-            viewInteraction.callZoom()
+        zoomTimer?.cancel()
+        zoomTimer = fixedRateTimer("zoom", false, 0, 100) {
+            CelestiaView.callOnRenderThread {
+                viewInteraction.callZoom()
+            }
         }
     }
 
     override fun didEndPressingAction(action: CelestiaControlAction) {
-        zoomTimer?.dispose()
+        zoomTimer?.cancel()
         zoomTimer = null
         viewInteraction?.zoomMode = null
     }

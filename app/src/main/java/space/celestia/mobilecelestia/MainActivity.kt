@@ -18,7 +18,6 @@ import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PersistableBundle
 import android.provider.DocumentsContract
 import android.util.Log
 import android.view.*
@@ -31,17 +30,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ShareCompat
 import androidx.core.graphics.contains
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.microsoft.appcenter.AppCenter
 import com.microsoft.appcenter.analytics.Analytics
 import com.microsoft.appcenter.crashes.Crashes
-import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
-import io.reactivex.rxjava3.core.Completable
-import io.reactivex.rxjava3.core.Observable
-import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.plugins.RxJavaPlugins
-import io.reactivex.rxjava3.schedulers.Schedulers
+import kotlinx.coroutines.*
 import org.json.JSONObject
 import space.celestia.mobilecelestia.browser.*
 import space.celestia.mobilecelestia.celestia.CelestiaFragment
@@ -118,8 +113,6 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
     private val celestiaParentPath by lazy { this.noBackupFilesDir.absolutePath }
     private val favoriteJsonFilePath by lazy { "${filesDir.absolutePath}/favorites.json" }
 
-    private val compositeDisposable = CompositeDisposable()
-
     private val core by lazy { CelestiaAppCore.shared() }
     private var currentSelection: CelestiaSelection? = null
 
@@ -155,9 +148,6 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
         super.onCreate(null)
 
         Log.d(TAG, "Creating MainActivity")
-
-        // Allow us to cancel tasks without crashing the app
-        RxJavaPlugins.setErrorHandler(Throwable::printStackTrace)
 
         if (!AppCenter.isConfigured()) {
             AppCenter.start(
@@ -228,25 +218,29 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
             return
         }
 
+        handleIntent(intent)
+
         if (currentState == AppStatusReporter.State.NONE || currentState == AppStatusReporter.State.EXTERNAL_LOADING) {
             Log.d(TAG, "Start fresh loading")
             AppStatusReporter.shared().updateState(AppStatusReporter.State.EXTERNAL_LOADING)
-            val disposable = createCopyAssetObservable()
-                .concatWith(createCreateExtraFolderObservable())
-                .concatWith(createLoadConfigObservable())
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe ({ status ->
-                    AppStatusReporter.shared().updateStatus(status)
-                }, { error ->
-                    AppStatusReporter.shared().updateState(AppStatusReporter.State.EXTERNAL_LOADING_FAILURE)
-                    loadConfigFailed(error)
-                }, {
-                    AppStatusReporter.shared().updateState(AppStatusReporter.State.EXTERNAL_LOADING_FINISHED)
-                    loadConfigSuccess()
-                })
-
-            compositeDisposable.add(disposable)
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    copyAssetIfNeeded()
+                    if (!isActive) return@launch
+                    createAddonFolder()
+                    if (!isActive) return@launch
+                    loadConfig()
+                    if (!isActive) return@launch
+                    with(Dispatchers.Main) {
+                        loadConfigSuccess()
+                    }
+                } catch (error: Throwable) {
+                    withContext(Dispatchers.Main) {
+                        AppStatusReporter.shared().updateState(AppStatusReporter.State.EXTERNAL_LOADING_FAILURE)
+                        loadConfigFailed(error)
+                    }
+                }
+            }
         } else {
             Log.d(TAG, "Configuration already loaded")
             loadConfigSuccess()
@@ -255,13 +249,10 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
                 celestiaLoadingSucceeded()
             }
         }
-
-        handleIntent(intent)
     }
 
     override fun onDestroy() {
         AppStatusReporter.shared().unregister(this)
-        compositeDisposable.clear()
 
         Log.d(TAG, "Destroying MainActivity")
 
@@ -319,7 +310,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
     }
 
     fun celestiaLoadingSucceeded() {
-        runOnUiThread {
+        lifecycleScope.launch {
             // hide the loading container
             findViewById<View>(R.id.loading_fragment_container).visibility = View.GONE
 
@@ -346,7 +337,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
             celestiaUnrecoveableLoadingFailed()
             return
         }
-        runOnUiThread {
+        lifecycleScope.launch {
             removeCelestiaFragment()
             showAlert(CelestiaString("Error loading data, fallback to original configuration.", "")) {
                 // Fallback to default
@@ -419,79 +410,65 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
         }
     }
 
-    private fun createCopyAssetObservable(): Observable<String> {
-        return Observable.create {
-            it.onNext(CelestiaString("Copying data…", ""))
-            if (preferenceManager[PreferenceManager.PredefinedKey.DataVersion] != CURRENT_DATA_VERSION) {
-                // When version name does not match, copy the asset again
-                copyAssetsAndRemoveOldAssets()
-            }
-            it.onComplete()
+    private fun copyAssetIfNeeded() {
+        AppStatusReporter.shared().updateStatus(CelestiaString("Copying data…", ""))
+        if (preferenceManager[PreferenceManager.PredefinedKey.DataVersion] != CURRENT_DATA_VERSION) {
+            // When version name does not match, copy the asset again
+            copyAssetsAndRemoveOldAssets()
         }
     }
 
-    private fun createCreateExtraFolderObservable(): Observable<String> {
-        return Observable.create<String> {
-            createAddonFolder()
-            it.onComplete()
-        }
-    }
-
-    private fun createLoadConfigObservable(): Observable<String> {
-        return Observable.create {
-            it.onNext(CelestiaString("Loading configuration…", ""))
-
-            availableInstalledFonts = mapOf(
-                "ja" to Pair(
-                    FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Regular.ttc", 0),
-                    FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Bold.ttc", 0)
-                ),
-                "ko" to Pair(
-                    FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Regular.ttc", 1),
-                    FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Bold.ttc", 1)
-                ),
-                "zh_CN" to Pair(
-                    FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Regular.ttc", 2),
-                    FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Bold.ttc", 2)
-                ),
-                "zh_TW" to Pair(
-                    FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Regular.ttc", 3),
-                    FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Bold.ttc", 3)
-                ),
-                "ar" to Pair(
-                    FontHelper.FontCompat("$fontDirPath/NotoSansArabic-Regular.ttf", 0),
-                    FontHelper.FontCompat("$fontDirPath/NotoSansArabic-Bold.ttf", 0)
-                )
+    private fun loadConfig() {
+        availableInstalledFonts = mapOf(
+            "ja" to Pair(
+                FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Regular.ttc", 0),
+                FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Bold.ttc", 0)
+            ),
+            "ko" to Pair(
+                FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Regular.ttc", 1),
+                FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Bold.ttc", 1)
+            ),
+            "zh_CN" to Pair(
+                FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Regular.ttc", 2),
+                FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Bold.ttc", 2)
+            ),
+            "zh_TW" to Pair(
+                FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Regular.ttc", 3),
+                FontHelper.FontCompat("$fontDirPath/NotoSansCJK-Bold.ttc", 3)
+            ),
+            "ar" to Pair(
+                FontHelper.FontCompat("$fontDirPath/NotoSansArabic-Regular.ttf", 0),
+                FontHelper.FontCompat("$fontDirPath/NotoSansArabic-Bold.ttf", 0)
             )
-            defaultInstalledFont = Pair(
-                FontHelper.FontCompat("$fontDirPath/NotoSans-Regular.ttf", 0),
-                FontHelper.FontCompat("$fontDirPath/NotoSans-Bold.ttf", 0)
-            )
+        )
+        defaultInstalledFont = Pair(
+            FontHelper.FontCompat("$fontDirPath/NotoSans-Regular.ttf", 0),
+            FontHelper.FontCompat("$fontDirPath/NotoSans-Bold.ttf", 0)
+        )
 
-            // Read custom paths here
-            customConfigFilePath = preferenceManager[PreferenceManager.PredefinedKey.ConfigFilePath]
-            customDataDirPath = preferenceManager[PreferenceManager.PredefinedKey.DataDirPath]
+        // Read custom paths here
+        customConfigFilePath = preferenceManager[PreferenceManager.PredefinedKey.ConfigFilePath]
+        customDataDirPath = preferenceManager[PreferenceManager.PredefinedKey.DataDirPath]
 
-            val localeDirectory = File("${celestiaDataDirPath}/locale")
-            if (localeDirectory.exists()) {
-                val languageCodes = ArrayList((localeDirectory.listFiles { file ->
-                    return@listFiles file.isDirectory
-                } ?: arrayOf()).map { file -> file.name })
-                availableLanguageCodes = languageCodes.sorted()
-            }
-
-            languageOverride = preferenceManager[PreferenceManager.PredefinedKey.Language]
-            enableMultisample = preferenceManager[PreferenceManager.PredefinedKey.MSAA] == "true"
-            enableHiDPI = preferenceManager[PreferenceManager.PredefinedKey.FullDPI] == "true"
-
-            // Load core library
-            if (!celestiaLibraryLoaded) {
-                System.loadLibrary("celestia")
-                celestiaLibraryLoaded = true
-            }
-
-            it.onComplete()
+        val localeDirectory = File("${celestiaDataDirPath}/locale")
+        if (localeDirectory.exists()) {
+            val languageCodes = ArrayList((localeDirectory.listFiles { file ->
+                return@listFiles file.isDirectory
+            } ?: arrayOf()).map { file -> file.name })
+            availableLanguageCodes = languageCodes.sorted()
         }
+
+        languageOverride = preferenceManager[PreferenceManager.PredefinedKey.Language]
+        enableMultisample = preferenceManager[PreferenceManager.PredefinedKey.MSAA] == "true"
+        enableHiDPI = preferenceManager[PreferenceManager.PredefinedKey.FullDPI] == "true"
+
+        // Load core library
+        if (!celestiaLibraryLoaded) {
+            System.loadLibrary("celestia")
+            celestiaLibraryLoaded = true
+        }
+
+        AppStatusReporter.shared().updateState(AppStatusReporter.State.EXTERNAL_LOADING_FINISHED)
     }
 
     private fun showWelcomeIfNeeded() {
@@ -526,10 +503,14 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
         val path = uri.path ?: return
         val id = uri.getQueryParameter("id") ?: return
         val service = ShareAPI.shared.create(ShareAPIService::class.java)
-        val disposable = service.resolve(path, id).commonHandler(URLResolultionResponse::class.java, success = {
-            requestOpenURL(it.resolvedURL)
-        })
-        compositeDisposable.add(disposable)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val result = service.resolve(path, id).commonHandler(URLResolultionResponse::class.java)
+                withContext(Dispatchers.Main) {
+                    requestOpenURL(result.resolvedURL)
+                }
+            } catch (ignored: Throwable) {}
+        }
     }
 
     private fun handleContentURI(uri: Uri) {
@@ -545,22 +526,21 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
             showAlert("Celestia does not know how to open $itemName")
             return
         }
-        val disposable = Observable.create<String> {
-            // Copy the file to cache
-            val path = "${cacheDir.absolutePath}/$itemName"
-            if (!FileUtils.copyUri(this, uri, path)) {
-                throw RuntimeException("Failed to open $itemName")
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val path = "${cacheDir.absolutePath}/$itemName"
+                if (!FileUtils.copyUri(this@MainActivity, uri, path)) {
+                    throw RuntimeException("Failed to open $itemName")
+                }
+                withContext(Dispatchers.Main) {
+                    requestRunScript(path)
+                }
+            } catch (error: Throwable) {
+                withContext(Dispatchers.Main) {
+                    showError(error)
+                }
             }
-            it.onNext(path)
         }
-            .subscribeOn(Schedulers.io())
-            .observeOn(AndroidSchedulers.mainThread())
-            .subscribe({ result ->
-                requestRunScript(result)
-            }, { error ->
-                showError(error)
-            })
-        compositeDisposable.add(disposable)
     }
 
     private fun requestRunScript(path: String) {
@@ -1048,7 +1028,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
     private fun applyBooleanValue(value: Boolean, field: String, reloadSettings: Boolean = false, volatile: Boolean = false) {
         CelestiaView.callOnRenderThread {
             core.setBooleanValueForField(field, value)
-            runOnUiThread {
+            lifecycleScope.launch {
                 if (!volatile)
                     settingManager[PreferenceManager.CustomKey(field)] = if (value) "1" else "0"
                 if (reloadSettings)
@@ -1060,7 +1040,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
     private fun applyIntValue(value: Int, field: String, reloadSettings: Boolean = false, volatile: Boolean = false) {
         CelestiaView.callOnRenderThread {
             core.setIntValueForField(field, value)
-            runOnUiThread {
+            lifecycleScope.launch {
                 if (!volatile)
                     settingManager[PreferenceManager.CustomKey(field)] = value.toString()
                 if (reloadSettings)
@@ -1072,7 +1052,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
     private fun applyDoubleValue(value: Double, field: String, reloadSettings: Boolean = false, volatile: Boolean = false) {
         CelestiaView.callOnRenderThread {
             core.setDoubleValueForField(field, value)
-            runOnUiThread {
+            lifecycleScope.launch {
                 if (!volatile)
                     settingManager[PreferenceManager.CustomKey(field)] = value.toString()
                 if (reloadSettings)
@@ -1115,7 +1095,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
                     }
                     CelestiaView.callOnRenderThread {
                         core.simulation.time = date.julianDay
-                        runOnUiThread {
+                        lifecycleScope.launch {
                             reloadSettings()
                         }
                     }
@@ -1180,15 +1160,19 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
         val alert = showLoading(CelestiaString("Calculating…", "")) {
             finder.abort()
         }
-        CelestiaView.callOnRenderThread {
-            val results = finder.search(startDate.julianDay, endDate.julianDay, CelestiaEclipseFinder.ECLIPSE_KIND_LUNAR or CelestiaEclipseFinder.ECLIPSE_KIND_SOLAR)
+        lifecycleScope.launch {
+            val results = withContext(Dispatchers.IO) {
+                finder.search(
+                    startDate.julianDay,
+                    endDate.julianDay,
+                    CelestiaEclipseFinder.ECLIPSE_KIND_LUNAR or CelestiaEclipseFinder.ECLIPSE_KIND_SOLAR
+                )
+            }
             EventFinderResultFragment.eclipses = results
-            runOnUiThread {
-                alert.dismiss()
-                val frag = supportFragmentManager.findFragmentById(R.id.normal_end_container)
-                if (frag is EventFinderContainerFragment) {
-                    frag.showResult()
-                }
+            if (alert.isShowing) alert.dismiss()
+            val frag = supportFragmentManager.findFragmentById(R.id.normal_end_container)
+            if (frag is EventFinderContainerFragment) {
+                frag.showResult()
             }
         }
     }
@@ -1263,70 +1247,60 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
 
     private fun hideOverlay(animated: Boolean = false, callback: (() -> Unit)? = null) {
         val ltr = resources.configuration.layoutDirection != View.LAYOUT_DIRECTION_RTL
-        val disposable = hideFragment(animated, R.id.normal_end_container, if (ltr) R.anim.exit_to_right else R.anim.exit_to_left)
-            .concatWith(hideFragment(animated, R.id.toolbar_end_container, if (ltr) R.anim.exit_to_right else R.anim.exit_to_left))
-            .concatWith {
+        hideFragment(animated, R.id.normal_end_container, if (ltr) R.anim.exit_to_right else R.anim.exit_to_left) {
+            hideFragment(animated, R.id.toolbar_end_container, if (ltr) R.anim.exit_to_right else R.anim.exit_to_left) {
                 findViewById<View>(R.id.overlay_container).visibility = View.INVISIBLE
                 findViewById<View>(R.id.end_notch).visibility = View.INVISIBLE
-                it.onComplete()
+                hideFragment(animated, R.id.toolbar_bottom_container, R.anim.exit_to_bottom) {
+                    findViewById<View>(R.id.bottom_container).visibility = View.INVISIBLE
+                    if (callback != null)
+                        callback()
+                }
             }
-            .concatWith(hideFragment(animated, R.id.toolbar_bottom_container, R.anim.exit_to_bottom))
-            .concatWith {
-                findViewById<View>(R.id.bottom_container).visibility = View.INVISIBLE
-                it.onComplete()
-            }
-            .subscribeOn(AndroidSchedulers.mainThread())
-            .observeOn(AndroidSchedulers.mainThread())
-            .subscribe {
-                if (callback != null)
-                    callback()
-            }
-        compositeDisposable.add(disposable)
+        }
     }
 
-    private fun hideFragment(animated: Boolean, containerID: Int, animationID: Int): Completable {
-        return Completable.create { emitter ->
-            val frag = supportFragmentManager.findFragmentById(containerID)
-            val view = findViewById<View>(containerID)
-            if (view == null || frag == null) {
-                if (frag != null) {
-                    if (frag is Cleanable) frag.cleanUp()
-                    supportFragmentManager.beginTransaction().hide(frag).remove(frag).commitAllowingStateLoss()
+    private fun hideFragment(animated: Boolean, containerID: Int, animationID: Int, completion: () -> Unit = {}) {
+        val frag = supportFragmentManager.findFragmentById(containerID)
+        val view = findViewById<View>(containerID)
+        if (view == null || frag == null) {
+            if (frag != null) {
+                if (frag is Cleanable) frag.cleanUp()
+                supportFragmentManager.beginTransaction().hide(frag).remove(frag).commitAllowingStateLoss()
+            }
+
+            if (view != null)
+                view.visibility = View.INVISIBLE
+
+            completion()
+            return@hideFragment
+        }
+
+        val fragView = frag.view
+        val executionBlock = {
+            if (frag is Cleanable)
+                frag.cleanUp()
+            supportFragmentManager.beginTransaction().hide(frag).remove(frag).commitAllowingStateLoss()
+            view.visibility = View.INVISIBLE
+            completion()
+        }
+
+        if (fragView == null || !animated) {
+            executionBlock()
+        } else {
+            val animation = AnimationUtils.loadAnimation(this, animationID)
+            animation.setAnimationListener(object: Animation.AnimationListener {
+                override fun onAnimationRepeat(animation: Animation?) {}
+                override fun onAnimationStart(animation: Animation?) {
+                    interactionBlocked = true
                 }
 
-                if (view != null)
-                    view.visibility = View.INVISIBLE
-
-                emitter.onComplete()
-                return@create
-            }
-
-            val fragView = frag.view
-            val executionBlock = {
-                if (frag is Cleanable)
-                    frag.cleanUp()
-                supportFragmentManager.beginTransaction().hide(frag).remove(frag).commitAllowingStateLoss()
-                view.visibility = View.INVISIBLE
-                emitter.onComplete()
-            }
-
-            if (fragView == null || !animated) {
-                executionBlock()
-            } else {
-                val animation = AnimationUtils.loadAnimation(this, animationID)
-                animation.setAnimationListener(object: Animation.AnimationListener {
-                    override fun onAnimationRepeat(animation: Animation?) {}
-                    override fun onAnimationStart(animation: Animation?) {
-                        interactionBlocked = true
-                    }
-
-                    override fun onAnimationEnd(animation: Animation?) {
-                        interactionBlocked = false
-                        executionBlock()
-                    }
-                })
-                fragView.startAnimation(animation)
-            }
+                override fun onAnimationEnd(animation: Animation?) {
+                    interactionBlocked = false
+                    executionBlock()
+                }
+            })
+            fragView.startAnimation(animation)
         }
     }
 
@@ -1337,7 +1311,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
             val name = core.simulation.universe.getNameForSelection(selection)
             val hasWebInfo = selection.webInfoURL != null
             val hasAltSurface = (selection.body?.alternateSurfaceNames?.size ?: 0) > 0
-            runOnUiThread {
+            lifecycleScope.launch {
                 currentSelection = selection
                 showEndFragment(InfoFragment.newInstance(
                     InfoDescriptionItem(name, overview, hasWebInfo, hasAltSurface)
@@ -1412,17 +1386,23 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
         showTextInput(CelestiaString("Share", ""), name) { title ->
             Toast.makeText(this, CelestiaString("Generating sharing link…", ""), Toast.LENGTH_SHORT).show()
             val service = ShareAPI.shared.create(ShareAPIService::class.java)
-            val disposable = service.create(title, url, versionCode.toString()).commonHandler(URLCreationResponse::class.java, success = {
-                ShareCompat.IntentBuilder
-                    .from(this)
-                    .setType("text/plain")
-                    .setChooserTitle(name)
-                    .setText(it.publicURL)
-                    .startChooser()
-            }, failure = {
-                showShareError()
-            })
-            compositeDisposable.add(disposable)
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val result = service.create(title, url, versionCode.toString()).commonHandler(URLCreationResponse::class.java)
+                    withContext(Dispatchers.Main) {
+                        ShareCompat.IntentBuilder
+                            .from(this@MainActivity)
+                            .setType("text/plain")
+                            .setChooserTitle(name)
+                            .setText(result.publicURL)
+                            .startChooser()
+                    }
+                } catch (ignored: Throwable) {
+                    withContext(Dispatchers.Main) {
+                        showShareError()
+                    }
+                }
+            }
         }
     }
 

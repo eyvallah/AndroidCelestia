@@ -13,21 +13,15 @@ package space.celestia.mobilecelestia.resource
 
 import android.os.Bundle
 import android.view.View
-import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
-import io.reactivex.rxjava3.core.Observable
-import io.reactivex.rxjava3.disposables.CompositeDisposable
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import space.celestia.mobilecelestia.resource.model.ResourceItem
 import space.celestia.mobilecelestia.resource.model.ResourceManager
 import space.celestia.mobilecelestia.utils.CelestiaString
 
 class InstalledResourceListFragment : AsyncListFragment<ResourceItem>() {
-    private val compositeDisposable = CompositeDisposable()
-
-    override fun onDestroy() {
-        compositeDisposable.clear()
-        super.onDestroy()
-    }
-
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -35,15 +29,14 @@ class InstalledResourceListFragment : AsyncListFragment<ResourceItem>() {
     }
 
     override fun refresh(success: (List<ResourceItem>) -> Unit, failure: (String) -> Unit) {
-        val disposable = Observable.create<List<ResourceItem>> {
-            it.onNext(ResourceManager.shared.installedResources())
-            it.onComplete()
+        lifecycleScope.launch {
+            try {
+                val installedResources = withContext(Dispatchers.IO) {
+                    ResourceManager.shared.installedResources()
+                }
+                success(installedResources)
+            } catch (ignored: Throwable) {}
         }
-            .subscribeOn(AndroidSchedulers.mainThread())
-            .subscribe { items ->
-                success(items)
-            }
-        compositeDisposable.add(disposable)
     }
 
     companion object {

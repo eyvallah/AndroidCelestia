@@ -11,9 +11,7 @@
 
 package space.celestia.mobilecelestia.share
 
-import io.reactivex.rxjava3.core.Observable
 import retrofit2.Retrofit
-import retrofit2.adapter.rxjava3.RxJava3CallAdapterFactory
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
 import space.celestia.mobilecelestia.utils.BaseResult
@@ -24,7 +22,6 @@ class URLResolultionResponse(val resolvedURL: String)
 object ShareAPI {
     val shared: Retrofit = Retrofit.Builder()
         .baseUrl("https://celestia.mobi/api/")
-        .addCallAdapterFactory(RxJava3CallAdapterFactory.create())
         .addConverterFactory(GsonConverterFactory.create())
         .build()
 }
@@ -32,15 +29,15 @@ object ShareAPI {
 interface ShareAPIService {
     @FormUrlEncoded
     @POST("create")
-    fun create(
+    suspend fun create(
         @Field("title") title: String,
         @Field("url") url: String,
         @Field("version") version: String
-    ): Observable<BaseResult>
+    ): BaseResult
 
     @GET("resolve")
-    fun resolve(
+    suspend fun resolve(
         @Query("path") path: String,
         @Query("id") id: String
-    ): Observable<BaseResult>
+    ): BaseResult
 }

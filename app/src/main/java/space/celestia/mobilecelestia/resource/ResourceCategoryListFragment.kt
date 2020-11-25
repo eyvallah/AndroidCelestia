@@ -13,8 +13,11 @@ package space.celestia.mobilecelestia.resource
 
 import android.os.Bundle
 import android.view.View
+import androidx.lifecycle.lifecycleScope
 import com.google.gson.reflect.TypeToken
-import io.reactivex.rxjava3.disposables.CompositeDisposable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import space.celestia.mobilecelestia.common.NavigationFragment
 import space.celestia.mobilecelestia.core.CelestiaAppCore
 import space.celestia.mobilecelestia.resource.model.ResourceAPI
@@ -24,28 +27,27 @@ import space.celestia.mobilecelestia.utils.CelestiaString
 import space.celestia.mobilecelestia.utils.commonHandler
 
 class ResourceCategoryListFragment : AsyncListFragment<ResourceCategory>() {
-    private val compositeDisposable = CompositeDisposable()
-
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         title = CelestiaString("Categories", "")
         menuItems = listOf(NavigationFragment.MenuItem(MENU_ITEM_MANAGE_INSTALLED, CelestiaString("Installed", "")))
     }
 
-    override fun onDestroy() {
-        compositeDisposable.clear()
-        super.onDestroy()
-    }
-
     override fun refresh(success: (List<ResourceCategory>) -> Unit, failure: (String) -> Unit) {
         val lang = CelestiaAppCore.getLocalizedString("LANGUAGE", "celestia")
         val service = ResourceAPI.shared.create(ResourceAPIService::class.java)
-        val disposable = service.categories(lang).commonHandler(object :
-            TypeToken<ArrayList<ResourceCategory>>() {}.type, success = success, failure =
-            {
-                failure(CelestiaString("Failed to load add-on categories.", ""))
-            })
-        compositeDisposable.add(disposable)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val result = service.categories(lang).commonHandler<List<ResourceCategory>>(object: TypeToken<ArrayList<ResourceCategory>>() {}.type, ResourceAPI.gson)
+                withContext(Dispatchers.Main) {
+                    success(result)
+                }
+            } catch (ignored: Throwable) {
+                withContext(Dispatchers.Main) {
+                    failure(CelestiaString("Failed to load add-ons.", ""))
+                }
+            }
+        }
     }
 
     companion object {

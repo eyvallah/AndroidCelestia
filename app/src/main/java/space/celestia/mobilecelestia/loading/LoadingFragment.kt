@@ -18,6 +18,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import space.celestia.mobilecelestia.R
 import space.celestia.mobilecelestia.utils.AppStatusReporter
 
@@ -49,7 +51,7 @@ class LoadingFragment : Fragment(), AppStatusReporter.Listener {
     }
 
     override fun celestiaLoadingProgress(status: String) {
-        activity?.runOnUiThread {
+        lifecycleScope.launch {
             Log.d(TAG, status)
             loadingLabel?.text = status
         }

@@ -17,9 +17,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.lifecycle.lifecycleScope
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.model.GlideUrl
-import io.reactivex.rxjava3.disposables.CompositeDisposable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import space.celestia.mobilecelestia.R
 import space.celestia.mobilecelestia.common.NavigationFragment
 import space.celestia.mobilecelestia.common.ProgressButton
@@ -46,7 +49,6 @@ class ResourceItemFragment : NavigationFragment.SubFragment(), ResourceManager.L
     private var authorsLabel: TextView? = null
     private var releaseDateLabel: TextView? = null
 
-    private val compositeDisposable = CompositeDisposable()
     private val formatter = DateFormat.getDateInstance(DateFormat.MEDIUM, Locale.getDefault())
 
     class GlideUrlCustomCacheKey(url: String, val key: String) : GlideUrl(url) {
@@ -106,15 +108,18 @@ class ResourceItemFragment : NavigationFragment.SubFragment(), ResourceManager.L
         // Fetch the latest data from server since user might have come from `Installed`
         val lang = CelestiaAppCore.getLocalizedString("LANGUAGE", "celestia")
         val service = ResourceAPI.shared.create(ResourceAPIService::class.java)
-        val disposable = service.item(lang, item.id).commonHandler(ResourceItem::class.java, ResourceAPI.gson, {
-            this.item = it
-            updateContents()
-        })
-        compositeDisposable.add(disposable)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val result = service.item(lang, item.id).commonHandler(ResourceItem::class.java, ResourceAPI.gson)
+                withContext(Dispatchers.Main) {
+                    this@ResourceItemFragment.item = result
+                    updateContents()
+                }
+            } catch (ignored: Throwable) {}
+        }
     }
 
     override fun onDestroy() {
-        compositeDisposable.clear()
         ResourceManager.shared.removeListener(this)
 
         super.onDestroy()

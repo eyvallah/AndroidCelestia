@@ -97,7 +97,7 @@ public class AppStatusReporter implements CelestiaAppCore.ProgressWatcher {
 
     public void updateStatus(@NonNull String status) {
         synchronized (lock) {
-            status = status;
+            this.status = status;
             for (Listener listener : listeners) {
                 listener.celestiaLoadingProgress(status);
             }
