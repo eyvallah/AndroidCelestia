@@ -4,7 +4,7 @@ cd `dirname $0`;
 
 DIDCOPY=0
 
-CELESTIA_ROOT=`pwd`/src/main/assets/CelestiaResources
+CELESTIA_ROOT=`pwd`/../base_assets/src/main/assets/CelestiaResources
 CELESTIA_REPO_ROOT=`pwd`/../../Celestia
 
 mkdir -p $CELESTIA_ROOT

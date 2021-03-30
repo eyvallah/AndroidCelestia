@@ -33,6 +33,6 @@ allprojects {
 }
 
 task clean(type: Delete) {
-    delete "$rootProject.projectDir/app/src/main/assets/CelestiaResources"
+    delete "$rootProject.projectDir/base_assets/src/main/assets/CelestiaResources"
     delete rootProject.buildDir
 }
